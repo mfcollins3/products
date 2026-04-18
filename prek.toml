@@ -1,0 +1,57 @@
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+hooks = [
+  { id = "check-added-large-files" },
+  { id = "check-case-conflict" },
+  { id = "check-executables-have-shebangs" },
+  { id = "check-illegal-windows-names" },
+  { id = "check-json" },
+  { id = "check-merge-conflict" },
+  { id = "check-shebang-scripts-are-executable" },
+  { id = "check-symlinks" },
+  { id = "check-toml" },
+  { id = "check-vcs-permalinks" },
+  { id = "destroyed-symlinks" },
+  { id = "detect-private-key" },
+  { id = "double-quote-string-fixer" },
+  { id = "end-of-file-fixer" },
+  { id = "pretty-format-json", args = ["--autofix"], exclude = ".devcontainer/devcontainer*.json" },
+  { id = "trailing-whitespace" },
+]
+
+[[repos]]
+repo = "https://github.com/shellcheck-py/shellcheck-py"
+rev = "v0.11.0.1"
+hooks = [
+  { id = "shellcheck" },
+]
+
+[[repos]]
+repo = "https://github.com/openstack/bashate"
+rev = "2.1.1"
+hooks = [
+  { id = "bashate" },
+]
+
+[[repos]]
+repo = "https://github.com/DavidAnson/markdownlint-cli2"
+rev = "v0.22.0"
+hooks = [
+  { id = "markdownlint-cli2" },
+]
+
+[[repos]]
+repo = "https://github.com/amperser/proselint"
+rev = "v0.16.0"
+hooks = [
+  { id = "proselint", args = ["check"], files = "\\.md$" },
+]
+
+[[repos]]
+repo = "https://github.com/commitizen-tools/commitizen"
+rev = "v4.13.9"  # Replace with latest tag
+hooks = [
+  { id = "commitizen" },
+  { id = "commitizen-branch", stages = ["pre-push"] },
+]

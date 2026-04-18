@@ -1,0 +1,30 @@
+{
+    "name": "product",
+    "image": "mcr.microsoft.com/devcontainers/base:2.1.7-bookworm",
+    "features": {
+        "ghcr.io/devcontainers/features/powershell:2": {},
+        "ghcr.io/iambipinpaul/devcontainer-features/oh-my-posh:1": {},
+        "ghcr.io/devcontainers/features/git:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {},
+        "ghcr.io/devcontainers/features/copilot-cli:1": {},
+        "ghcr.io/devcontainers-extra/features/prek:1": {},
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.13.13"
+        },
+        "ghcr.io/devcontainers-extra/features/uv:1": {},
+        "ghcr.io/prulloac/devcontainer-features/commitizen:1": {}
+    },
+    "remoteUser": "vscode",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "tamasfe.even-better-toml",
+                "DavidAnson.vscode-markdownlint"
+            ],
+            "settings": {
+                "terminal.integrated.fontFamily": "MesloLGM Nerd Font"
+            }
+        }
+    },
+    "postCreateCommand": "bash setup.sh"
+}
