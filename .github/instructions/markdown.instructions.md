@@ -134,3 +134,12 @@ When generating markdown content, please follow these guidelines.
   or `[`.
 - [ ] No disallowed raw HTML tags (`<script>`, `<style>`, `<title>`,
   `<textarea>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>`, `<plaintext>`).
+
+## Bare URLs
+
+- Do not use bare URLs; always use proper link syntax `[text](url)` or reference
+  links.
+
+## Lists
+
+- Lists must be surrounded by blank lines.
