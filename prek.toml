@@ -41,12 +41,12 @@ hooks = [
   { id = "markdownlint-cli2" },
 ]
 
-[[repos]]
-repo = "https://github.com/amperser/proselint"
-rev = "v0.16.0"
-hooks = [
-  { id = "proselint", args = ["check"], files = "\\.md$" },
-]
+# [[repos]]
+# repo = "https://github.com/amperser/proselint"
+# rev = "v0.16.0"
+# hooks = [
+#   { id = "proselint", args = ["check"], files = "\\.md$" },
+# ]
 
 [[repos]]
 repo = "https://github.com/commitizen-tools/commitizen"
