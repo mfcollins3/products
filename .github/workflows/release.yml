@@ -1,0 +1,716 @@
+# Copyright 2026 Michael F. Collins, III
+# Licensed under the Naked Products Source-Available Temporary License
+# See LICENSE.md for license terms
+#
+# Release workflow. Triggered by any tag push matching v*.
+#
+# Job dependency graph:
+#
+#   prepare
+#     └── build (6-way matrix → _build-sea.yml)
+#           ├── package-macos
+#           ├── package-linux
+#           └── package-windows
+#                 └── checksums
+#                       └── github-release
+#                             ├── publish-winget-custom
+#                             │     └── publish-winget-official (stable only)
+#                             └── publish-homebrew
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Default: read-only token. Individual jobs declare write permissions
+# only for what they actually need.
+permissions:
+  contents: read
+
+jobs:
+  # ────────────────────────────────────────────────────────────────────
+  # Parse the tag into version + stability flag.
+  # ────────────────────────────────────────────────────────────────────
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      is_stable: ${{ steps.parse.outputs.is_stable }}
+    steps:
+      - name: Parse version and determine stability
+        id: parse
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Stable: vX.Y.Z with no pre-release suffix and X >= 1.
+          if [[ "$TAG" =~ ^v[1-9][0-9]*\.[0-9]+\.[0-9]+$ ]]; then
+            echo "is_stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "Tag:       $TAG"
+          echo "Version:   $VERSION"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Build SEA binaries for all 6 OS + arch combinations.
+  # ────────────────────────────────────────────────────────────────────
+  build:
+    name: Build SEA
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            os: macos
+            arch: x64
+          - runner: macos-latest
+            os: macos
+            arch: arm64
+          - runner: ubuntu-24.04
+            os: linux
+            arch: x64
+          - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: windows-latest
+            os: windows
+            arch: x64
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+    uses: ./.github/workflows/_build-sea.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      runner: ${{ matrix.runner }}
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
+    secrets: inherit
+
+  # ────────────────────────────────────────────────────────────────────
+  # Package macOS: .pkg installers for x64 and arm64.
+  # ────────────────────────────────────────────────────────────────────
+  package-macos:
+    name: Package (macOS)
+    runs-on: macos-latest
+    needs: [prepare, build]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        # TODO: pin to SHA
+        uses: actions/checkout@v4
+
+      - name: Download macOS x64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-macos-x64
+          path: artifacts/macos-x64
+
+      - name: Download macOS arm64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-macos-arm64
+          path: artifacts/macos-arm64
+
+      - name: Import Developer ID Installer certificate
+        shell: bash
+        env:
+          CERT_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_P12" | base64 --decode > installer-cert.p12
+          security create-keychain -p "gh-actions-pkg" pkg.keychain
+          security default-keychain -s pkg.keychain
+          security unlock-keychain -p "gh-actions-pkg" pkg.keychain
+          security import installer-cert.p12 \
+            -k pkg.keychain \
+            -P "$CERT_PASSWORD" \
+            -T /usr/bin/productbuild
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "gh-actions-pkg" pkg.keychain
+          rm installer-cert.p12
+
+      - name: Build and sign .pkg (x64)
+        shell: bash
+        run: |
+          ARCH=x64
+          BINARY="artifacts/macos-${ARCH}/nakedproducts"
+          chmod +x "$BINARY"
+
+          # Build component package from binary.
+          mkdir -p "pkg-root-${ARCH}/usr/local/bin"
+          cp "$BINARY" "pkg-root-${ARCH}/usr/local/bin/nakedproducts"
+          pkgbuild \
+            --root "pkg-root-${ARCH}" \
+            --install-location / \
+            --identifier com.mfcollins3.nakedproducts \
+            --version "$VERSION" \
+            nakedproducts-component.pkg
+
+          # Find installer signing identity from keychain.
+          IDENTITY=$(
+            security find-identity -v -p basic pkg.keychain \
+              | grep "Developer ID Installer" \
+              | head -1 \
+              | sed 's/.*"\(.*\)".*/\1/'
+          )
+
+          # Wrap component package into a distributable installer.
+          productbuild \
+            --distribution packaging/macos/distribution.xml \
+            --package-path . \
+            --sign "$IDENTITY" \
+            "nakedproducts-${VERSION}-macos-${ARCH}.pkg"
+
+          rm nakedproducts-component.pkg
+
+      - name: Notarize and staple .pkg (x64)
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool submit \
+            "nakedproducts-${VERSION}-macos-x64.pkg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "nakedproducts-${VERSION}-macos-x64.pkg"
+
+      - name: Build and sign .pkg (arm64)
+        shell: bash
+        run: |
+          ARCH=arm64
+          BINARY="artifacts/macos-${ARCH}/nakedproducts"
+          chmod +x "$BINARY"
+
+          mkdir -p "pkg-root-${ARCH}/usr/local/bin"
+          cp "$BINARY" "pkg-root-${ARCH}/usr/local/bin/nakedproducts"
+          pkgbuild \
+            --root "pkg-root-${ARCH}" \
+            --install-location / \
+            --identifier com.mfcollins3.nakedproducts \
+            --version "$VERSION" \
+            nakedproducts-component.pkg
+
+          IDENTITY=$(
+            security find-identity -v -p basic pkg.keychain \
+              | grep "Developer ID Installer" \
+              | head -1 \
+              | sed 's/.*"\(.*\)".*/\1/'
+          )
+
+          productbuild \
+            --distribution packaging/macos/distribution.xml \
+            --package-path . \
+            --sign "$IDENTITY" \
+            "nakedproducts-${VERSION}-macos-${ARCH}.pkg"
+
+          rm nakedproducts-component.pkg
+
+      - name: Notarize and staple .pkg (arm64)
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool submit \
+            "nakedproducts-${VERSION}-macos-arm64.pkg" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "nakedproducts-${VERSION}-macos-arm64.pkg"
+
+      - name: Upload macOS packages
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-macos
+          path: "nakedproducts-*-macos-*.pkg"
+          if-no-files-found: error
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────
+  # Package Linux: .deb and .rpm for x64 and arm64 via fpm.
+  # ────────────────────────────────────────────────────────────────────
+  package-linux:
+    name: Package (Linux)
+    runs-on: ubuntu-24.04
+    needs: [prepare, build]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Install fpm dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            ruby ruby-dev rubygems build-essential rpm
+          sudo gem install fpm --no-document
+
+      - name: Download Linux x64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-linux-x64
+          path: artifacts/linux-x64
+
+      - name: Download Linux arm64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-linux-arm64
+          path: artifacts/linux-arm64
+
+      - name: Build .deb and .rpm (x64)
+        run: |
+          chmod +x artifacts/linux-x64/nakedproducts
+          COMMON_OPTS=(
+            --name nakedproducts
+            --version "$VERSION"
+            --description "AI-powered product initialization assistant"
+            --maintainer "Michael F. Collins, III <michael@michaelfcollins3.dev>"
+            --url "https://github.com/mfcollins3/products"
+            --license "LicenseRef-Naked-Products-Source-Available"
+          )
+          fpm -s dir -t deb \
+            "${COMMON_OPTS[@]}" \
+            --architecture amd64 \
+            artifacts/linux-x64/nakedproducts=/usr/local/bin/nakedproducts
+          fpm -s dir -t rpm \
+            "${COMMON_OPTS[@]}" \
+            --architecture x86_64 \
+            artifacts/linux-x64/nakedproducts=/usr/local/bin/nakedproducts
+
+      - name: Build .deb and .rpm (arm64)
+        run: |
+          chmod +x artifacts/linux-arm64/nakedproducts
+          COMMON_OPTS=(
+            --name nakedproducts
+            --version "$VERSION"
+            --description "AI-powered product initialization assistant"
+            --maintainer "Michael F. Collins, III <michael@michaelfcollins3.dev>"
+            --url "https://github.com/mfcollins3/products"
+            --license "LicenseRef-Naked-Products-Source-Available"
+          )
+          fpm -s dir -t deb \
+            "${COMMON_OPTS[@]}" \
+            --architecture arm64 \
+            artifacts/linux-arm64/nakedproducts=/usr/local/bin/nakedproducts
+          fpm -s dir -t rpm \
+            "${COMMON_OPTS[@]}" \
+            --architecture aarch64 \
+            artifacts/linux-arm64/nakedproducts=/usr/local/bin/nakedproducts
+
+      - name: Upload Linux packages
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-linux
+          path: |
+            nakedproducts_*.deb
+            nakedproducts-*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────
+  # Package Windows: .msi installers for x64 and arm64 via WiX v4.
+  # ────────────────────────────────────────────────────────────────────
+  package-windows:
+    name: Package (Windows)
+    runs-on: windows-latest
+    needs: [prepare, build]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        # TODO: pin to SHA
+        uses: actions/checkout@v4
+
+      - name: Install WiX v4 toolset
+        run: dotnet tool install --global wix
+
+      - name: Download Windows x64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-windows-x64
+          path: artifacts/windows-x64
+
+      - name: Download Windows arm64 binary
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: nakedproducts-windows-arm64
+          path: artifacts/windows-arm64
+
+      - name: Build MSI (x64)
+        shell: pwsh
+        run: |
+          # Stage binary next to .wxs so Source= resolves correctly.
+          Copy-Item "artifacts/windows-x64/nakedproducts.exe" `
+            "packaging/windows/nakedproducts.exe" -Force
+          wix build packaging/windows/nakedproducts.wxs `
+            -d "Version=$Env:VERSION" `
+            -arch x64 `
+            -o "nakedproducts-$Env:VERSION-windows-x64.msi"
+          Remove-Item "packaging/windows/nakedproducts.exe"
+
+      - name: Build MSI (arm64)
+        shell: pwsh
+        run: |
+          Copy-Item "artifacts/windows-arm64/nakedproducts.exe" `
+            "packaging/windows/nakedproducts.exe" -Force
+          wix build packaging/windows/nakedproducts.wxs `
+            -d "Version=$Env:VERSION" `
+            -arch arm64 `
+            -o "nakedproducts-$Env:VERSION-windows-arm64.msi"
+          Remove-Item "packaging/windows/nakedproducts.exe"
+
+      - name: Sign MSI packages via Azure Trusted Signing
+        # TODO: pin to SHA
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: >-
+            ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: >-
+            ${{ vars.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+          files-folder: "."
+          files-folder-filter: "*.msi"
+          file-digest: SHA256
+          timestamp-rfc3161: "http://timestamp.acs.microsoft.com"
+          timestamp-digest: SHA256
+
+      - name: Upload Windows packages
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-windows
+          path: "nakedproducts-*-windows-*.msi"
+          if-no-files-found: error
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────
+  # Compute SHA-256 checksums for all release artifacts.
+  # ────────────────────────────────────────────────────────────────────
+  checksums:
+    name: Checksums
+    runs-on: ubuntu-24.04
+    needs: [package-macos, package-linux, package-windows]
+    permissions:
+      contents: read
+    steps:
+      - name: Download macOS packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-macos
+          path: dist/
+
+      - name: Download Linux packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-linux
+          path: dist/
+
+      - name: Download Windows packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-windows
+          path: dist/
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: dist/
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          echo "--- SHA256SUMS.txt ---"
+          cat SHA256SUMS.txt
+
+      - name: Upload checksums artifact
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────────
+  # Create GitHub Release and upload all artifacts.
+  # ────────────────────────────────────────────────────────────────────
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-24.04
+    needs: [prepare, checksums]
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-macos
+          path: dist/
+
+      - name: Download Linux packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-linux
+          path: dist/
+
+      - name: Download Windows packages
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-windows
+          path: dist/
+
+      - name: Download checksums
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist/
+
+      - name: Create GitHub Release
+        # TODO: pin to SHA
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "v${{ needs.prepare.outputs.version }}"
+          generate_release_notes: true
+          # Pre-release when not a stable vX.Y.Z tag (X >= 1).
+          prerelease: >-
+            ${{ needs.prepare.outputs.is_stable != 'true' }}
+          files: dist/**
+          fail_on_unmatched_files: true
+
+  # ────────────────────────────────────────────────────────────────────
+  # Publish to the custom WinGet REST source.
+  # All releases (including pre-release) go here.
+  # ────────────────────────────────────────────────────────────────────
+  publish-winget-custom:
+    name: Publish to custom WinGet source
+    runs-on: ubuntu-24.04
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download checksums
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist/
+
+      - name: Publish package manifest
+        shell: bash
+        env:
+          WINGET_SOURCE_TOKEN: ${{ secrets.WINGET_SOURCE_TOKEN }}
+        run: |
+          X64_MSI="nakedproducts-${VERSION}-windows-x64.msi"
+          ARM64_MSI="nakedproducts-${VERSION}-windows-arm64.msi"
+
+          X64_SHA=$(grep "$X64_MSI" dist/SHA256SUMS.txt | awk '{print $1}')
+          ARM64_SHA=$(grep "$ARM64_MSI" dist/SHA256SUMS.txt | awk '{print $1}')
+
+          BASE_URL="https://github.com/mfcollins3/products/releases/download"
+
+          MANIFEST=$(jq -nc \
+            --arg id "MFCollins3.NakedProducts" \
+            --arg ver "$VERSION" \
+            --arg x64_url "${BASE_URL}/${TAG}/${X64_MSI}" \
+            --arg x64_sha "$X64_SHA" \
+            --arg arm64_url "${BASE_URL}/${TAG}/${ARM64_MSI}" \
+            --arg arm64_sha "$ARM64_SHA" \
+            '{
+              PackageIdentifier: $id,
+              Versions: [{
+                PackageVersion: $ver,
+                DefaultLocale: {
+                  PackageLocale: "en-US",
+                  Publisher: "Michael F. Collins, III",
+                  PublisherUrl: "https://github.com/mfcollins3",
+                  PackageName: "Naked Products",
+                  PackageUrl: "https://github.com/mfcollins3/products",
+                  License: "LicenseRef-Naked-Products-Source-Available",
+                  ShortDescription: "AI-powered product initialization assistant"
+                },
+                Locales: [],
+                Installers: [
+                  {
+                    Architecture: "x64",
+                    InstallerType: "wix",
+                    InstallerUrl: $x64_url,
+                    InstallerSha256: $x64_sha,
+                    InstallerLocale: "en-US",
+                    Scope: "machine"
+                  },
+                  {
+                    Architecture: "arm64",
+                    InstallerType: "wix",
+                    InstallerUrl: $arm64_url,
+                    InstallerSha256: $arm64_sha,
+                    InstallerLocale: "en-US",
+                    Scope: "machine"
+                  }
+                ]
+              }]
+            }')
+
+          HTTP_STATUS=$(curl -s -o /tmp/winget-response.json -w "%{http_code}" \
+            -X POST \
+            "https://winget.michaelfcollins3.dev/api/packageManifests" \
+            -H "Content-Type: application/json" \
+            -H "x-functions-key: ${WINGET_SOURCE_TOKEN}" \
+            -d "$MANIFEST")
+
+          echo "HTTP status: $HTTP_STATUS"
+          cat /tmp/winget-response.json
+
+          if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -gt 299 ]]; then
+            echo "::error::WinGet custom source publish failed (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+
+  # ────────────────────────────────────────────────────────────────────
+  # Submit PR to microsoft/winget-pkgs.
+  # Only runs for stable releases (vX.Y.Z, X >= 1).
+  # ────────────────────────────────────────────────────────────────────
+  publish-winget-official:
+    name: Publish to microsoft/winget-pkgs
+    runs-on: windows-latest
+    needs: [prepare, publish-winget-custom]
+    if: needs.prepare.outputs.is_stable == 'true'
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Install wingetcreate
+        run: dotnet tool install --global Microsoft.WingetCreate
+
+      - name: Submit WinGet manifest PR
+        shell: pwsh
+        env:
+          WINGET_PKGS_TOKEN: ${{ secrets.WINGET_PKGS_TOKEN }}
+        run: |
+          $base = "https://github.com/mfcollins3/products/releases/download/$Env:TAG"
+          wingetcreate update MFCollins3.NakedProducts `
+            --version $Env:VERSION `
+            --urls `
+              "$base/nakedproducts-$Env:VERSION-windows-x64.msi" `
+              "$base/nakedproducts-$Env:VERSION-windows-arm64.msi" `
+            --token $Env:WINGET_PKGS_TOKEN `
+            --submit
+
+  # ────────────────────────────────────────────────────────────────────
+  # Update the Homebrew tap formula for every release.
+  # ────────────────────────────────────────────────────────────────────
+  publish-homebrew:
+    name: Update Homebrew tap
+    runs-on: ubuntu-24.04
+    needs: [prepare, github-release]
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download checksums
+        # TODO: pin to SHA
+        uses: actions/download-artifact@v4
+        with:
+          name: checksums
+          path: dist/
+
+      - name: Compute .pkg SHA-256 values
+        id: sha
+        run: |
+          PKG_X64="nakedproducts-${VERSION}-macos-x64.pkg"
+          PKG_ARM64="nakedproducts-${VERSION}-macos-arm64.pkg"
+          SHA_X64=$(grep "$PKG_X64" dist/SHA256SUMS.txt | awk '{print $1}')
+          SHA_ARM64=$(grep "$PKG_ARM64" dist/SHA256SUMS.txt | awk '{print $1}')
+          echo "x64=${SHA_X64}" >> "$GITHUB_OUTPUT"
+          echo "arm64=${SHA_ARM64}" >> "$GITHUB_OUTPUT"
+
+      - name: Clone homebrew-tap
+        run: |
+          git clone \
+            "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/mfcollins3/homebrew-tap.git" \
+            tap
+
+      - name: Write formula
+        run: |
+          mkdir -p tap/Formula
+          cat > tap/Formula/nakedproducts.rb <<RUBY
+          # Copyright 2026 Michael F. Collins, III
+          # Licensed under the Naked Products Source-Available Temporary License
+          # See LICENSE.md for license terms
+          class Nakedproducts < Formula
+            desc "AI agent-driven tool for managing software products"
+            homepage "https://github.com/mfcollins3/products"
+            version "${VERSION}"
+            license "LicenseRef-Naked-Products-Source-Available"
+
+            on_macos do
+              on_intel do
+                url "https://github.com/mfcollins3/products/releases/download/${TAG}/nakedproducts-${VERSION}-macos-x64.pkg"
+                sha256 "${{ steps.sha.outputs.x64 }}"
+              end
+              on_arm do
+                url "https://github.com/mfcollins3/products/releases/download/${TAG}/nakedproducts-${VERSION}-macos-arm64.pkg"
+                sha256 "${{ steps.sha.outputs.arm64 }}"
+              end
+            end
+
+            def install
+              bin.install "nakedproducts"
+            end
+
+            test do
+              system "#{bin}/nakedproducts", "version"
+            end
+          end
+          RUBY
+
+      - name: Commit and push formula update
+        working-directory: tap
+        run: |
+          git config user.name "Brett (Release Bot)"
+          git config user.email "brett-bot@users.noreply.github.com"
+          git add Formula/nakedproducts.rb
+          git commit -m \
+            "feat: update nakedproducts formula to v${VERSION}"
+          git push

@@ -1,0 +1,233 @@
+# Copyright 2026 Michael F. Collins, III
+# Licensed under the Naked Products Source-Available Temporary License
+# See LICENSE.md for license terms
+#
+# Reusable workflow. Builds a Node.js Single Executable Application
+# (SEA) binary for the given OS + architecture, signs it, notarizes
+# it (macOS), and uploads it as a GitHub Actions artifact.
+#
+# Called by release.yml with secrets: inherit so that signing secrets
+# are available to all steps without re-declaration.
+name: Build SEA Binary
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Semantic version string, e.g. 1.2.3"
+        type: string
+        required: true
+      runner:
+        description: "GitHub Actions runner label"
+        type: string
+        required: true
+      os:
+        description: "Target OS: macos | linux | windows"
+        type: string
+        required: true
+      arch:
+        description: "Target architecture: x64 | arm64"
+        type: string
+        required: true
+
+jobs:
+  build:
+    name: SEA (${{ inputs.os }}, ${{ inputs.arch }})
+    runs-on: ${{ inputs.runner }}
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────
+      - name: Checkout
+        # TODO: pin to SHA
+        uses: actions/checkout@v4
+
+      # ── Node.js ─────────────────────────────────────────────────────
+      - name: Setup Node.js 24
+        # TODO: pin to SHA
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        # TODO: pin to SHA
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: >-
+            node_modules-${{ runner.os }}-${{ inputs.arch }}-${{
+            hashFiles('package-lock.json') }}
+          restore-keys: |
+            node_modules-${{ runner.os }}-${{ inputs.arch }}-
+
+      - name: Install dependencies
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      # ── TypeScript compile ──────────────────────────────────────────
+      - name: Build (tsc)
+        run: npm run build
+        # Produces ./dist/cli.js which is the SEA entrypoint.
+
+      # ── Node.js SEA blob ────────────────────────────────────────────
+      - name: Create SEA config
+        shell: bash
+        run: |
+          cat > sea-config.json <<'EOF'
+          {
+            "main": "dist/cli.js",
+            "output": "sea-prep.blob",
+            "disableExperimentalSEAWarning": true
+          }
+          EOF
+
+      - name: Generate SEA blob
+        run: node --experimental-sea-config sea-config.json
+
+      # ── Prepare host binary ─────────────────────────────────────────
+      - name: Copy Node.js binary (macOS / Linux)
+        if: inputs.os != 'windows'
+        shell: bash
+        run: cp "$(which node)" nakedproducts
+
+      - name: Copy Node.js binary (Windows)
+        if: inputs.os == 'windows'
+        shell: pwsh
+        run: Copy-Item (Get-Command node).Source nakedproducts.exe
+
+      # ── Remove pre-existing signature before injection ──────────────
+      - name: Remove signature (macOS)
+        if: inputs.os == 'macos'
+        run: codesign --remove-signature nakedproducts
+
+      - name: Remove signature (Windows)
+        if: inputs.os == 'windows'
+        shell: pwsh
+        run: signtool remove /s nakedproducts.exe
+
+      # ── Inject SEA blob via postject ────────────────────────────────
+      - name: Inject SEA blob (macOS)
+        if: inputs.os == 'macos'
+        run: >-
+          npx --yes postject nakedproducts
+          NODE_SEA_BLOB sea-prep.blob
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+          --macho-segment-name NODE_SEA
+
+      - name: Inject SEA blob (Linux)
+        if: inputs.os == 'linux'
+        run: >-
+          npx --yes postject nakedproducts
+          NODE_SEA_BLOB sea-prep.blob
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      - name: Inject SEA blob (Windows)
+        if: inputs.os == 'windows'
+        shell: pwsh
+        run: >-
+          npx --yes postject nakedproducts.exe
+          NODE_SEA_BLOB sea-prep.blob
+          --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+
+      # ── macOS: import signing certificate ───────────────────────────
+      - name: Import Developer ID Application cert (macOS)
+        if: inputs.os == 'macos'
+        shell: bash
+        env:
+          CERT_P12: ${{ secrets.APPLE_DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_P12" | base64 --decode > developer-id.p12
+          security create-keychain -p "gh-actions-tmp" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "gh-actions-tmp" build.keychain
+          security import developer-id.p12 \
+            -k build.keychain \
+            -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -k "gh-actions-tmp" build.keychain
+          rm developer-id.p12
+
+      # ── macOS: sign binary ──────────────────────────────────────────
+      - name: Sign binary (macOS)
+        if: inputs.os == 'macos'
+        shell: bash
+        run: |
+          IDENTITY=$(
+            security find-identity -v -p codesigning build.keychain \
+              | grep "Developer ID Application" \
+              | head -1 \
+              | sed 's/.*"\(.*\)".*/\1/'
+          )
+          codesign \
+            --sign "$IDENTITY" \
+            --options runtime \
+            --timestamp \
+            --force \
+            nakedproducts
+
+      # ── macOS: notarize binary ──────────────────────────────────────
+      - name: Notarize binary (macOS)
+        if: inputs.os == 'macos'
+        shell: bash
+        env:
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: |
+          # Wrap binary in a zip for notarytool submission.
+          zip nakedproducts-notarize.zip nakedproducts
+          xcrun notarytool submit nakedproducts-notarize.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PASSWORD" \
+            --wait
+          rm nakedproducts-notarize.zip
+          # Note: xcrun stapler cannot staple a raw Mach-O binary
+          # (only .app/.dmg/.pkg). The notarization ticket is stored
+          # on Apple's servers; Gatekeeper will verify online.
+          # Stapling of the installer .pkg is handled in package-macos.
+
+      # ── Windows: sign binary via Azure Trusted Signing ─────────────
+      - name: Sign binary (Windows)
+        if: inputs.os == 'windows'
+        # TODO: pin to SHA
+        uses: azure/trusted-signing-action@v0
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: >-
+            ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+          certificate-profile-name: >-
+            ${{ vars.AZURE_TRUSTED_SIGNING_CERT_PROFILE }}
+          files-folder: "."
+          files-folder-filter: "nakedproducts.exe"
+          file-digest: SHA256
+          timestamp-rfc3161: "http://timestamp.acs.microsoft.com"
+          timestamp-digest: SHA256
+
+      # ── Upload artifact ─────────────────────────────────────────────
+      - name: Upload binary artifact (macOS / Linux)
+        if: inputs.os != 'windows'
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: nakedproducts-${{ inputs.os }}-${{ inputs.arch }}
+          path: nakedproducts
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload binary artifact (Windows)
+        if: inputs.os == 'windows'
+        # TODO: pin to SHA
+        uses: actions/upload-artifact@v4
+        with:
+          name: nakedproducts-${{ inputs.os }}-${{ inputs.arch }}
+          path: nakedproducts.exe
+          if-no-files-found: error
+          retention-days: 7

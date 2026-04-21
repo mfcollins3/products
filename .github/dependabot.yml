@@ -1,0 +1,30 @@
+# Copyright 2026 Michael F. Collins, III
+# Licensed under the Naked Products Source-Available Temporary License
+# See LICENSE.md for license terms
+version: 2
+
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "brett"
+      - "dependencies"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "parker"
+      - "dependencies"
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    open-pull-requests-limit: 10
