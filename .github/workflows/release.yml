@@ -237,12 +237,26 @@ jobs:
             --wait
           xcrun stapler staple "nakedproducts-${VERSION}-macos-arm64.pkg"
 
+      - name: Create macOS tarballs for Homebrew
+        shell: bash
+        run: |
+          for ARCH in x64 arm64; do
+            BINARY="artifacts/macos-${ARCH}/nakedproducts"
+            chmod +x "$BINARY"
+            mkdir -p "tarball-${ARCH}"
+            cp "$BINARY" "tarball-${ARCH}/nakedproducts"
+            tar -czf "nakedproducts-${VERSION}-macos-${ARCH}.tar.gz" \
+              -C "tarball-${ARCH}" nakedproducts
+          done
+
       - name: Upload macOS packages
         # TODO: pin to SHA
         uses: actions/upload-artifact@v4
         with:
           name: packages-macos
-          path: "nakedproducts-*-macos-*.pkg"
+          path: |
+            nakedproducts-*-macos-*.pkg
+            nakedproducts-*-macos-*.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -319,6 +333,17 @@ jobs:
             --architecture aarch64 \
             artifacts/linux-arm64/nakedproducts=/usr/local/bin/nakedproducts
 
+      - name: Create Linux tarballs for Homebrew
+        run: |
+          for ARCH in x64 arm64; do
+            BINARY="artifacts/linux-${ARCH}/nakedproducts"
+            chmod +x "$BINARY"
+            mkdir -p "tarball-linux-${ARCH}"
+            cp "$BINARY" "tarball-linux-${ARCH}/nakedproducts"
+            tar -czf "nakedproducts-${VERSION}-linux-${ARCH}.tar.gz" \
+              -C "tarball-linux-${ARCH}" nakedproducts
+          done
+
       - name: Upload Linux packages
         # TODO: pin to SHA
         uses: actions/upload-artifact@v4
@@ -327,6 +352,7 @@ jobs:
           path: |
             nakedproducts_*.deb
             nakedproducts-*.rpm
+            nakedproducts-*-linux-*.tar.gz
           if-no-files-found: error
           retention-days: 7
 
@@ -346,8 +372,8 @@ jobs:
         # TODO: pin to SHA
         uses: actions/checkout@v4
 
-      - name: Install WiX v4 toolset
-        run: dotnet tool install --global wix
+      - name: Install WiX v7 toolset
+        run: dotnet tool install --global wix --version 7.0.0
 
       - name: Download Windows x64 binary
         # TODO: pin to SHA
@@ -637,6 +663,8 @@ jobs:
 
   # ────────────────────────────────────────────────────────────────────
   # Update the Homebrew tap formula for every release.
+  # Formula uses tarballs (not .pkg) so bin.install works correctly.
+  # on_linux blocks enable Homebrew on Linux (Linuxbrew).
   # ────────────────────────────────────────────────────────────────────
   publish-homebrew:
     name: Update Homebrew tap
@@ -655,15 +683,16 @@ jobs:
           name: checksums
           path: dist/
 
-      - name: Compute .pkg SHA-256 values
+      - name: Extract tarball SHA-256 values
         id: sha
         run: |
-          PKG_X64="nakedproducts-${VERSION}-macos-x64.pkg"
-          PKG_ARM64="nakedproducts-${VERSION}-macos-arm64.pkg"
-          SHA_X64=$(grep "$PKG_X64" dist/SHA256SUMS.txt | awk '{print $1}')
-          SHA_ARM64=$(grep "$PKG_ARM64" dist/SHA256SUMS.txt | awk '{print $1}')
-          echo "x64=${SHA_X64}" >> "$GITHUB_OUTPUT"
-          echo "arm64=${SHA_ARM64}" >> "$GITHUB_OUTPUT"
+          get_sha() {
+            grep "$1" dist/SHA256SUMS.txt | awk '{print $1}'
+          }
+          echo "macos_x64=$(get_sha   "nakedproducts-${VERSION}-macos-x64.tar.gz")"   >> "$GITHUB_OUTPUT"
+          echo "macos_arm64=$(get_sha "nakedproducts-${VERSION}-macos-arm64.tar.gz")" >> "$GITHUB_OUTPUT"
+          echo "linux_x64=$(get_sha   "nakedproducts-${VERSION}-linux-x64.tar.gz")"   >> "$GITHUB_OUTPUT"
+          echo "linux_arm64=$(get_sha "nakedproducts-${VERSION}-linux-arm64.tar.gz")" >> "$GITHUB_OUTPUT"
 
       - name: Clone homebrew-tap
         run: |
@@ -674,6 +703,7 @@ jobs:
       - name: Write formula
         run: |
           mkdir -p tap/Formula
+          BASE="https://github.com/mfcollins3/products/releases/download/${TAG}"
           cat > tap/Formula/nakedproducts.rb <<RUBY
           # Copyright 2026 Michael F. Collins, III
           # Licensed under the Naked Products Source-Available Temporary License
@@ -686,12 +716,23 @@ jobs:
 
             on_macos do
               on_intel do
-                url "https://github.com/mfcollins3/products/releases/download/${TAG}/nakedproducts-${VERSION}-macos-x64.pkg"
-                sha256 "${{ steps.sha.outputs.x64 }}"
+                url "${BASE}/nakedproducts-${VERSION}-macos-x64.tar.gz"
+                sha256 "${{ steps.sha.outputs.macos_x64 }}"
               end
               on_arm do
-                url "https://github.com/mfcollins3/products/releases/download/${TAG}/nakedproducts-${VERSION}-macos-arm64.pkg"
-                sha256 "${{ steps.sha.outputs.arm64 }}"
+                url "${BASE}/nakedproducts-${VERSION}-macos-arm64.tar.gz"
+                sha256 "${{ steps.sha.outputs.macos_arm64 }}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "${BASE}/nakedproducts-${VERSION}-linux-x64.tar.gz"
+                sha256 "${{ steps.sha.outputs.linux_x64 }}"
+              end
+              on_arm do
+                url "${BASE}/nakedproducts-${VERSION}-linux-arm64.tar.gz"
+                sha256 "${{ steps.sha.outputs.linux_arm64 }}"
               end
             end
 
@@ -705,12 +746,12 @@ jobs:
           end
           RUBY
 
-      - name: Commit and push formula update
+      - name: Commit and push formula
         working-directory: tap
         run: |
-          git config user.name "Brett (Release Bot)"
-          git config user.email "brett-bot@users.noreply.github.com"
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
           git add Formula/nakedproducts.rb
-          git commit -m \
-            "feat: update nakedproducts formula to v${VERSION}"
+          git diff --cached --quiet && echo "No changes to formula" && exit 0
+          git commit -m "feat: update nakedproducts formula to v${VERSION}"
           git push
