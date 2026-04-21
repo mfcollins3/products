@@ -1,0 +1,31 @@
+{
+  "assignment_cast_snapshots": {
+    "naked-products-init-2026-04-21": {
+      "agents": [
+        "Dallas",
+        "Parker",
+        "Lambert",
+        "Ash",
+        "Ripley",
+        "Brett",
+        "Kane"
+      ],
+      "created_at": "2026-04-21",
+      "resonance_signals": [
+        "small-crew",
+        "high-stakes-tooling",
+        "operational-discipline"
+      ],
+      "shape_fit_score": 1.0,
+      "size_fit_score": 1.0,
+      "universe": "Alien"
+    }
+  },
+  "universe_usage_history": [
+    {
+      "assigned_at": "2026-04-21",
+      "assignment_id": "naked-products-init-2026-04-21",
+      "universe": "Alien"
+    }
+  ]
+}

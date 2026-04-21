@@ -22,6 +22,7 @@ Naked Products. ADRs are written using the
 | [0012](0012-persist-sessions-to-disk.md) | Persist Sessions to Disk | Proposed |
 | [0013](0013-use-madr-3-for-adrs.md) | Use MADR 3.0 for Architectural Decision Records | Proposed |
 | [0014](0014-use-github-actions-for-ci-cd.md) | Use GitHub Actions for CI/CD | Proposed |
+| [0015](0015-use-telemetry-relay-api.md) | Use a Telemetry Relay API to Protect the GA4 Measurement Protocol Secret | Proposed |
 
 ## Format
 

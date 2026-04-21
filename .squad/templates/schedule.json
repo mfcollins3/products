@@ -1,0 +1,22 @@
+{
+  "schedules": [
+    {
+      "enabled": true,
+      "id": "ralph-heartbeat",
+      "name": "Ralph Heartbeat",
+      "providers": [
+        "local-polling",
+        "github-actions"
+      ],
+      "task": {
+        "ref": ".github/workflows/squad-heartbeat.yml",
+        "type": "workflow"
+      },
+      "trigger": {
+        "intervalSeconds": 300,
+        "type": "interval"
+      }
+    }
+  ],
+  "version": 1
+}

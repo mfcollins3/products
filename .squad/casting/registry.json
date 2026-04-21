@@ -1,0 +1,60 @@
+{
+  "agents": {
+    "ash": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Ash",
+      "role": "Copilot SDK Specialist",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "brett": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Brett",
+      "role": "DevOps",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "dallas": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Dallas",
+      "role": "Lead",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "kane": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Kane",
+      "role": "DevRel/Docs",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "lambert": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Lambert",
+      "role": "TUI Dev",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "parker": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Parker",
+      "role": "Core/Backend Dev",
+      "status": "active",
+      "universe": "Alien"
+    },
+    "ripley": {
+      "created_at": "2026-04-21",
+      "legacy_named": false,
+      "persistent_name": "Ripley",
+      "role": "Tester",
+      "status": "active",
+      "universe": "Alien"
+    }
+  }
+}

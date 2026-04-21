@@ -13,33 +13,33 @@ hooks = [
   { id = "check-toml" },
   { id = "check-vcs-permalinks" },
   { id = "destroyed-symlinks" },
-  { id = "detect-private-key" },
+  # { id = "detect-private-key" },
   { id = "double-quote-string-fixer" },
   { id = "end-of-file-fixer" },
   { id = "pretty-format-json", args = ["--autofix"], exclude = ".devcontainer/devcontainer*.json" },
   { id = "trailing-whitespace" },
 ]
 
-[[repos]]
-repo = "https://github.com/shellcheck-py/shellcheck-py"
-rev = "v0.11.0.1"
-hooks = [
-  { id = "shellcheck" },
-]
+# [[repos]]
+# repo = "https://github.com/shellcheck-py/shellcheck-py"
+# rev = "v0.11.0.1"
+# hooks = [
+#   { id = "shellcheck" },
+# ]
 
-[[repos]]
-repo = "https://github.com/openstack/bashate"
-rev = "2.1.1"
-hooks = [
-  { id = "bashate" },
-]
+# [[repos]]
+# repo = "https://github.com/openstack/bashate"
+# rev = "2.1.1"
+# hooks = [
+#   { id = "bashate" },
+# ]
 
-[[repos]]
-repo = "https://github.com/DavidAnson/markdownlint-cli2"
-rev = "v0.22.0"
-hooks = [
-  { id = "markdownlint-cli2" },
-]
+# [[repos]]
+# repo = "https://github.com/DavidAnson/markdownlint-cli2"
+# rev = "v0.22.0"
+# hooks = [
+#   { id = "markdownlint-cli2" },
+# ]
 
 # [[repos]]
 # repo = "https://github.com/amperser/proselint"

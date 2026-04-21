@@ -111,7 +111,7 @@ templates) in addition to the foundational artifacts.
 
 ## 4. Release plan (high level)
 
-### v1.0.0 - TBD - Product initialization
+### v1.0.0 - 2026-09-01 - Product initialization
 
 The first release focuses on the complete product initialization workflow.
 "Done" means a product owner can install Naked Products via a platform-native
@@ -168,7 +168,11 @@ so that I can use it without installing native packages.
 
 - [ ] A container image is published to GitHub Container Registry (ghcr.io)
 - [ ] The image is available for linux/amd64 and linux/arm64 architectures
-- [ ] The image uses a Google distroless base image for minimal attack surface
+- [ ] The image uses a Google distroless base image for minimal attack
+  surface (see [ADR-0009](adrs/0009-use-distroless-container-image.md))
+- [ ] Static binaries for `git`, `gh`, and the GitHub Copilot CLI are copied
+  from intermediate builder stages into the distroless final image (no shell
+  or package manager in the final image)
 - [ ] The image includes `git`, `gh` (GitHub CLI), and the GitHub Copilot CLI
 - [ ] The container can be run with `docker run` and mounts the host filesystem
   for output
@@ -180,7 +184,9 @@ so that I can use it without installing native packages.
 GitHub Actions CI pipeline (leveraging dependency caching), then use a
 Dockerfile that copies the pre-built output into the
 `gcr.io/distroless/nodejs24-debian12` base image with the additional CLI tools.
-Publish multi-arch images using Docker buildx.
+Publish multi-arch images using Docker buildx. Binary versions for `git`, `gh`,
+and the Copilot CLI are pinned in the Dockerfile and updated via dependency-bot
+PRs.
 
 **Priority:** Must-have
 
@@ -241,9 +247,15 @@ GitHub CLI authentication so that I don't need to manage separate credentials.
   `gh auth login`
 - [ ] All GitHub API calls use the token from `gh auth token`
 - [ ] The application never stores or caches GitHub credentials independently
+- [ ] The application validates that the `gh` token includes the scopes
+  required for the operation: `repo` and `project` for all repository
+  operations, `read:org` when targeting an organization, and `admin:org` only
+  when GitHub team creation (PROD-015) is invoked. Missing scopes produce a
+  clear error naming the scope and the `gh` command needed to grant it.
 
 **Technical notes:** Use `gh auth token` to retrieve the auth token. Validate
-the token has the required scopes before proceeding.
+the token has the required scopes before proceeding; scope validation uses the
+`X-OAuth-Scopes` response header from `GET /user`.
 
 **Priority:** Must-have
 
@@ -283,14 +295,18 @@ repository for my product so that I have version control set up from the start.
 
 - [ ] The agent asks for the desired directory path for the new repository
 - [ ] A new Git repository is initialized with `git init`
-- [ ] An appropriate `.gitignore` file is created based on the product's
-  technology stack
+- [ ] The agent asks the user to identify the technology stack (programming
+  languages, frameworks, build tools) for the new project
+- [ ] A `.gitignore` file is composed from gitignore templates matching the
+  selected stack and written to the repository root
 - [ ] A `.gitattributes` file is created with sensible defaults
 - [ ] An initial commit is created with the foundational files
 - [ ] The default branch is named `main`
 
 **Technical notes:** Use Node.js `child_process` or a Git library (e.g.,
-simple-git) to execute Git commands.
+simple-git) to execute Git commands. Gitignore templates are sourced from the
+[`github/gitignore`](https://github.com/github/gitignore) repository (cached
+locally) or bundled with the application.
 
 **Priority:** Must-have
 
@@ -600,8 +616,9 @@ used and fix serious issues.
   `~/.config/naked-products/config.json`
 - [ ] The user can change their telemetry preference at any time via
   `nakedproducts telemetry --enable` or `nakedproducts telemetry --disable`
-- [ ] When telemetry is enabled, the following data is collected via Google
-  Analytics:
+- [ ] When telemetry is enabled, the following events are sent to the Naked
+  Products telemetry relay (which forwards to Google Analytics GA4
+  server-side):
   - Application launch events
   - Feature usage events (which commands/workflow steps are used)
   - Session duration
@@ -615,12 +632,17 @@ used and fix serious issues.
 - [ ] No personally identifiable information (PII) is collected; telemetry uses
   a random anonymous client ID
 
-**Technical notes:** Use the Google Analytics Measurement Protocol (GA4) to send
-events server-side. Generate a random anonymous client ID on first opt-in and
-store it in the config file. Batch events where possible to minimize network
-calls. The privacy policy should be bundled as a text file with the application.
+**Technical notes:** Telemetry events are POSTed to a Naked Products-operated
+telemetry relay endpoint (see
+[ADR-0015](adrs/0015-use-telemetry-relay-api.md)). The relay holds the GA4
+Measurement Protocol API secret server-side, forwarding validated events to
+GA4. The CLI does not contain any GA4 credentials. Generate a random anonymous
+client ID on first opt-in and store it in the config file. Batch events where
+possible to minimize network calls. The privacy policy is bundled as a text
+file with the application.
 
-**Priority:** Should-have
+**Priority:** Should-have (depends on telemetry relay availability — may slip
+to v1.0.1)
 
 ## 6. Non-functional requirements
 

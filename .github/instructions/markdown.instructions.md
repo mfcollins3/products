@@ -42,6 +42,8 @@ When generating markdown content, please follow these guidelines.
 - **Fenced code blocks**: Open with 3+ backticks or tildes (do not mix). Closing
   fence must use same character with at least the same count. Specify language
   identifier after the opening fence. Content is literal text.
+  - use `plain` as the language identifier for plain text code blocks or if
+    the code block does not correspond to a specific programming language.
 - **HTML blocks**: Seven types defined by start/end tag conditions. Types 1–6
   can interrupt paragraphs; type 7 cannot. Content is passed through as raw HTML.
   - Type 1: `<script>`, `<pre>`, or `<style>` (case-insensitive) — ends at
