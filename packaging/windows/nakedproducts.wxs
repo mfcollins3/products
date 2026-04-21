@@ -32,7 +32,7 @@ GUID below must never ship to end users.
     Name="Naked Products"
     Manufacturer="Michael F. Collins, III"
     Version="$(var.Version)"
-    UpgradeCode="00000000-0000-0000-0000-000000000001"
+    UpgradeCode="34388A03-36B7-4352-8F74-70189DB2EADA"
     InstallerVersion="500"
   >
     <!--
