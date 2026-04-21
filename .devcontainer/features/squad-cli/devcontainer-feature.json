@@ -1,0 +1,16 @@
+{
+  "description": "Installs the Squad CLI (@bradygaster/squad-cli) globally via npm so the squad command is available inside the development container.",
+  "id": "squad-cli",
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/node"
+  ],
+  "name": "Squad CLI",
+  "options": {
+    "version": {
+      "default": "latest",
+      "description": "The version of @bradygaster/squad-cli to install. Defaults to the latest published release. Specify a semver version (e.g. 0.9.1) for reproducible builds.",
+      "type": "string"
+    }
+  },
+  "version": "1.0.0"
+}

@@ -12,7 +12,13 @@
             "version": "3.13.13"
         },
         "ghcr.io/devcontainers-extra/features/uv:1": {},
-        "ghcr.io/prulloac/devcontainer-features/commitizen:1": {}
+        "ghcr.io/prulloac/devcontainer-features/commitizen:1": {},
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "24.15.0"
+        },
+        "./features/squad-cli": {
+            "version": "0.9.1"
+        }
     },
     "remoteUser": "vscode",
     "customizations": {
