@@ -54,7 +54,7 @@ jobs:
         # TODO: pin to SHA
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version-file: '.node-version'
           # Caches the npm registry cache (~/.npm) so that subsequent
           # npm ci calls download fewer packages from the network.
           cache: "npm"
