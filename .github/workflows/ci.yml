@@ -1,0 +1,109 @@
+# Copyright 2026 Michael F. Collins, III
+# Licensed under the Naked Products Source-Available Temporary License
+# See LICENSE.md for license terms
+#
+# Runs on every branch push and on pull requests targeting main or
+# squad. Intentionally excluded from tag pushes so that the release
+# workflow owns the build for tagged commits.
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+    tags-ignore:
+      - "**"
+  pull_request:
+    branches:
+      - main
+      - squad
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            arch: x64
+            runner: macos-13
+          - os: macos
+            arch: arm64
+            runner: macos-latest
+          - os: linux
+            arch: x64
+            runner: ubuntu-24.04
+          - os: linux
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - os: windows
+            arch: x64
+            runner: windows-latest
+          - os: windows
+            arch: arm64
+            runner: windows-11-arm
+
+    steps:
+      - name: Checkout
+        # TODO: pin to SHA
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        # TODO: pin to SHA
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.node-version'
+          # Caches the npm registry cache (~/.npm) so that subsequent
+          # npm ci calls download fewer packages from the network.
+          cache: "npm"
+
+      - name: Cache node_modules
+        id: cache-node-modules
+        # TODO: pin to SHA
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          # Key includes the OS, architecture, and lockfile hash so
+          # that any dependency change invalidates the cache.
+          key: >-
+            node_modules-${{ runner.os }}-${{ matrix.arch }}-${{
+            hashFiles('package-lock.json') }}
+          restore-keys: |
+            node_modules-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Install dependencies
+        # Skip install when node_modules was restored from cache to
+        # keep CI fast; npm ci is still run on cache miss to guarantee
+        # a clean, reproducible install.
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Write build summary
+        if: always()
+        shell: bash
+        run: |
+          STATUS="${{ job.status }}"
+          echo "## Build Result: ${STATUS}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|-------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| OS | ${{ matrix.os }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Architecture | ${{ matrix.arch }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Runner | ${{ matrix.runner }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Node.js | 24 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Ref | \`${{ github.ref_name }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Commit | \`${{ github.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"

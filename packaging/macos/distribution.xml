@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2026 Michael F. Collins, III
+Licensed under the Naked Products Source-Available Temporary License
+See LICENSE.md for license terms
+-->
+<installer-gui-script minSpecVersion="1">
+    <title>Naked Products</title>
+    <organization>com.mfcollins3</organization>
+
+    <domains enable_localSystem="true"/>
+    <options
+        customize="never"
+        require-scripts="false"
+        rootVolumeOnly="true"
+    />
+
+    <os-version min="13.0"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.mfcollins3.nakedproducts"/>
+        </line>
+    </choices-outline>
+
+    <choice id="default"/>
+    <choice
+        id="com.mfcollins3.nakedproducts"
+        visible="false"
+        title="Naked Products"
+        description="AI-powered product initialization assistant"
+    >
+        <pkg-ref id="com.mfcollins3.nakedproducts"/>
+    </choice>
+
+    <!--
+        The pkg-ref version and onConclusion are set at build time by
+        productbuild when it reads the component package produced by
+        pkgbuild. The source attribute is the filename of the component
+        package in the package-path directory.
+    -->
+    <pkg-ref
+        id="com.mfcollins3.nakedproducts"
+        onConclusion="none"
+    >nakedproducts-component.pkg</pkg-ref>
+</installer-gui-script>
