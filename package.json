@@ -4,8 +4,9 @@
   },
   "dependencies": {
     "ink": "^6.0.0",
-    "pastel": "^3.0.0",
-    "react": "^19.0.0"
+    "pastel": "^4.0.0",
+    "react": "^19.0.0",
+    "zod": "^4.0.0"
   },
   "description": "AI-powered product initialization assistant.",
   "devDependencies": {
